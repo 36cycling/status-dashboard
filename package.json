@@ -5,9 +5,9 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "cd server && npm run dev",
     "dev:client": "cd client && npm run dev",
-    "build": "npm install --prefix client && npm run build --prefix client && cp -r client/dist server/public && npm install --prefix server && npm run build --prefix server",
-    "start": "node server/dist/index.js",
-    "postinstall": "npm run build"
+    "build": "cd client && npm install && npm run build && cd ../server && npm install && npm run build",
+    "postbuild": "node -e \"const fs=require('fs');const path=require('path');function copyDir(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s)){const sp=path.join(s,f),dp=path.join(d,f);fs.statSync(sp).isDirectory()?copyDir(sp,dp):fs.copyFileSync(sp,dp)}}copyDir('client/dist','server/dist/public')\"",
+    "start": "node server/dist/index.js"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

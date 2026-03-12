@@ -52,7 +52,7 @@ async function start() {
   app.use('/api/auth', authRouter);
 
   // Serve React frontend in production
-  const clientDist = path.join(__dirname, '..', 'public');
+  const clientDist = path.join(__dirname, 'public');
   app.use(express.static(clientDist));
   app.get('*', (_req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
