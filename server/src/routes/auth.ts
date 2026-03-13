@@ -6,26 +6,8 @@ const router = Router();
 
 const getBaseUrl = (req: any) => process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
 
-// Outlook OAuth
-router.get('/outlook', async (req, res) => {
-  try {
-    const redirectUri = `${getBaseUrl(req)}/api/auth/outlook/callback`;
-    const url = await outlook.getAuthUrl(redirectUri);
-    res.redirect(url);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.get('/outlook/callback', async (req, res) => {
-  try {
-    const redirectUri = `${getBaseUrl(req)}/api/auth/outlook/callback`;
-    await outlook.handleCallback(req.query.code as string, redirectUri);
-    res.redirect('/?connected=outlook');
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Outlook - no OAuth needed, uses client credentials flow
+// Connection status is based on environment variables
 
 // Teamleader OAuth
 router.get('/teamleader', (req, res) => {
