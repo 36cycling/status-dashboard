@@ -125,15 +125,21 @@ export async function syncMails() {
 
   if (!folder) throw new Error(`Mail folder "${folderName}" not found`);
 
+  // Only fetch mails from the last 2 months
+  const twoMonthsAgo = new Date();
+  twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+  const dateFilter = `receivedDateTime ge ${twoMonthsAgo.toISOString()}`;
+
   // Get messages from the folder
   const messages = await graphRequest(
-    `${mailboxPath}/mailFolders/${folder.id}/messages?$top=200&$orderby=receivedDateTime desc&$select=id,subject,bodyPreview,receivedDateTime,from,isRead,conversationId`,
+    `${mailboxPath}/mailFolders/${folder.id}/messages?$top=200&$orderby=receivedDateTime desc&$filter=${encodeURIComponent(dateFilter)}&$select=id,subject,bodyPreview,receivedDateTime,from,isRead,conversationId`,
     token
   );
 
-  // Get sent items to match replies
+  // Get sent items to match replies (also last 2 months)
+  const sentDateFilter = `sentDateTime ge ${twoMonthsAgo.toISOString()}`;
   const sentItems = await graphRequest(
-    `${mailboxPath}/mailFolders('SentItems')/messages?$top=200&$orderby=sentDateTime desc&$select=id,subject,bodyPreview,sentDateTime,toRecipients,conversationId`,
+    `${mailboxPath}/mailFolders('SentItems')/messages?$top=200&$orderby=sentDateTime desc&$filter=${encodeURIComponent(sentDateFilter)}&$select=id,subject,bodyPreview,sentDateTime,toRecipients,conversationId`,
     token
   );
 
@@ -153,10 +159,15 @@ export async function syncMails() {
     const existing = getOne('SELECT id FROM timeline_events WHERE outlook_message_id = ?', [msg.id]);
     if (existing) continue;
 
-    // Create or find customer
+    // Create or find customer — reactivate if archived
     d.run('INSERT OR IGNORE INTO customers (name, email) VALUES (?, ?)', [senderName, senderEmail]);
-    const customer = getOne('SELECT id FROM customers WHERE email = ?', [senderEmail]);
+    const customer = getOne('SELECT id, archived FROM customers WHERE email = ?', [senderEmail]);
     if (!customer) continue;
+
+    // If customer was archived but has a new mail, reactivate
+    if (customer.archived) {
+      d.run('UPDATE customers SET archived = 0 WHERE id = ?', [customer.id]);
+    }
 
     const isReplied = repliedConversations.has(msg.conversationId);
 
