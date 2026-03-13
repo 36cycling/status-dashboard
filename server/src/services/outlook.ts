@@ -2,7 +2,7 @@ import * as msal from '@azure/msal-node';
 import { runQuery, getOne, getAll, saveDb, getDb } from '../db';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
-const SCOPES = ['https://graph.microsoft.com/Mail.Read'];
+const SCOPES = ['https://graph.microsoft.com/Mail.ReadWrite.Shared'];
 
 let _msalClient: msal.ConfidentialClientApplication | null = null;
 
@@ -115,21 +115,23 @@ export async function syncMails() {
   if (!token) throw new Error('Outlook not connected');
 
   const folderName = process.env.OUTLOOK_FOLDER_NAME || 'Klantaanvragen';
+  const targetMailbox = process.env.OUTLOOK_MAILBOX || '';
+  const mailboxPath = targetMailbox ? `/users/${targetMailbox}` : '/me';
 
   // Find the target folder
-  const folders = await graphRequest('/me/mailFolders?$top=100', token);
+  const folders = await graphRequest(`${mailboxPath}/mailFolders?$top=100`, token);
   const folder = folders.value.find((f: GraphMailFolder) => f.displayName === folderName);
   if (!folder) throw new Error(`Mail folder "${folderName}" not found`);
 
   // Get messages from the folder
   const messages = await graphRequest(
-    `/me/mailFolders/${folder.id}/messages?$top=200&$orderby=receivedDateTime desc&$select=id,subject,bodyPreview,receivedDateTime,from,isRead,conversationId`,
+    `${mailboxPath}/mailFolders/${folder.id}/messages?$top=200&$orderby=receivedDateTime desc&$select=id,subject,bodyPreview,receivedDateTime,from,isRead,conversationId`,
     token
   );
 
   // Get sent items to match replies
   const sentItems = await graphRequest(
-    `/me/mailFolders('SentItems')/messages?$top=200&$orderby=sentDateTime desc&$select=id,subject,bodyPreview,sentDateTime,toRecipients,conversationId`,
+    `${mailboxPath}/mailFolders('SentItems')/messages?$top=200&$orderby=sentDateTime desc&$select=id,subject,bodyPreview,sentDateTime,toRecipients,conversationId`,
     token
   );
 
