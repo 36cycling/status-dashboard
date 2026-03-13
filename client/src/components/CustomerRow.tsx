@@ -32,7 +32,7 @@ export default function CustomerRow({ customer, onArchive }: Props) {
       {/* Timeline */}
       <div className="flex gap-2 overflow-x-auto pb-2 px-2 flex-1 min-w-0">
         {customer.events.map((event) => (
-          <TimelineEvent key={event.id} event={event} />
+          <TimelineEvent key={event.id} event={event} customerName={customer.name} />
         ))}
         {customer.events.length === 0 && (
           <div className="text-sm text-slate-400 italic py-3 px-4">Geen events</div>

@@ -86,6 +86,57 @@ export async function listAllFolders(): Promise<any[]> {
   return result;
 }
 
+// Parse contact form emails to extract the actual sender's name and email
+function parseContactForm(body: string): { name: string; email: string } | null {
+  // Pattern 1: "Naam\nKees Wouters\nE-mail\nkees@example.com"
+  // Pattern 2: "Voornaam: Jelle\nAchternaam: Aalbers\nE-mail: jelle@example.com"
+
+  let name = '';
+  let email = '';
+
+  // Try to find email first
+  const emailPatterns = [
+    /E-?mail\s*[:]\s*([^\s\n]+@[^\s\n]+)/i,
+    /E-?mail\s*\n\s*([^\s\n]+@[^\s\n]+)/i,
+  ];
+  for (const pattern of emailPatterns) {
+    const match = body.match(pattern);
+    if (match) {
+      email = match[1].trim().toLowerCase();
+      break;
+    }
+  }
+
+  if (!email) return null;
+
+  // Try to find name
+  const namePatterns = [
+    // "Voornaam: X\nAchternaam: Y"
+    /Voornaam\s*[:]\s*([^\n]+)[\s\S]*?Achternaam\s*[:]\s*([^\n]+)/i,
+    // "Naam\nValue"
+    /Naam\s*\n\s*([^\n]+)/i,
+    // "Naam: Value"
+    /Naam\s*[:]\s*([^\n]+)/i,
+    // "Name: Value"
+    /Name\s*[:]\s*([^\n]+)/i,
+  ];
+
+  for (const pattern of namePatterns) {
+    const match = body.match(pattern);
+    if (match) {
+      if (match[2]) {
+        // Voornaam + Achternaam
+        name = `${match[1].trim()} ${match[2].trim()}`;
+      } else {
+        name = match[1].trim();
+      }
+      break;
+    }
+  }
+
+  return { name: name || email, email };
+}
+
 interface GraphMessage {
   id: string;
   subject: string;
@@ -152,12 +203,14 @@ export async function syncMails() {
   const d = getDb();
 
   for (const msg of messages.value as GraphMessage[]) {
-    const senderEmail = msg.from.emailAddress.address.toLowerCase();
-    const senderName = msg.from.emailAddress.name;
-
     // Skip if event already exists
     const existing = getOne('SELECT id FROM timeline_events WHERE outlook_message_id = ?', [msg.id]);
     if (existing) continue;
+
+    // Check if this is a contact form email (extract real sender from body)
+    const contactForm = parseContactForm(msg.bodyPreview);
+    const senderEmail = contactForm ? contactForm.email : msg.from.emailAddress.address.toLowerCase();
+    const senderName = contactForm ? contactForm.name : msg.from.emailAddress.name;
 
     // Create or find customer — reactivate if archived
     d.run('INSERT OR IGNORE INTO customers (name, email) VALUES (?, ?)', [senderName, senderEmail]);

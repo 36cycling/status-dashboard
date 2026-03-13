@@ -3,6 +3,7 @@ import type { TimelineEvent as TEvent } from '../../../shared/types';
 
 interface Props {
   event: TEvent;
+  customerName?: string;
 }
 
 function formatDate(dateStr: string): string {
@@ -33,7 +34,7 @@ function getEventStyle(event: TEvent): string {
   }
 }
 
-export default function TimelineEvent({ event }: Props) {
+export default function TimelineEvent({ event, customerName }: Props) {
   const [showTooltip, setShowTooltip] = useState(false);
 
   return (
@@ -49,6 +50,11 @@ export default function TimelineEvent({ event }: Props) {
             ? event.summary
             : `${event.subject}`}
         </div>
+        {customerName && (
+          <div className="text-[10px] mt-1 truncate font-medium opacity-80 border-t border-current/20 pt-1">
+            {customerName}
+          </div>
+        )}
       </div>
 
       {showTooltip && (
