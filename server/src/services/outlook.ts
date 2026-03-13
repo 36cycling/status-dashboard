@@ -3,6 +3,27 @@ import { runQuery, getOne, getAll, saveDb, getDb } from '../db';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
+// Internal email addresses to skip as customers
+const INTERNAL_EMAILS = [
+  'info@36cycling.com',
+  'jeroen@36cycling.com',
+  'lisette@36cycling.com',
+  'michael@36cycling.com',
+  'lars@36cycling.com',
+  'info@teamleader.eu',
+  'noreply@',
+  'no-reply@',
+];
+
+function isInternalEmail(email: string): boolean {
+  const lower = email.toLowerCase();
+  return INTERNAL_EMAILS.some(internal =>
+    internal.includes('@')
+      ? lower === internal
+      : lower.startsWith(internal)
+  );
+}
+
 let _msalClient: msal.ConfidentialClientApplication | null = null;
 
 function getMsalClient(): msal.ConfidentialClientApplication {
@@ -87,20 +108,26 @@ export async function listAllFolders(): Promise<any[]> {
 }
 
 // Parse contact form emails to extract the actual sender's name and email
+// Handles \r\n, \n, and various form formats
 function parseContactForm(body: string): { name: string; email: string } | null {
-  // Pattern 1: "Naam\nKees Wouters\nE-mail\nkees@example.com"
-  // Pattern 2: "Voornaam: Jelle\nAchternaam: Aalbers\nE-mail: jelle@example.com"
+  // Normalize line endings
+  const text = body.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
   let name = '';
   let email = '';
 
-  // Try to find email first
+  // Try to find email address in form data
   const emailPatterns = [
-    /E-?mail\s*[:]\s*([^\s\n]+@[^\s\n]+)/i,
-    /E-?mail\s*\n\s*([^\s\n]+@[^\s\n]+)/i,
+    // "E-mail\nkees@example.com" or "E-mail\n kees@example.com"
+    /E-?[Mm]ail\s*\n\s*([^\s\n]+@[^\s\n]+)/i,
+    // "E-mail: kees@example.com" or "E-Mail: kees@example.com"
+    /E-?[Mm]ail\s*[:]\s*([^\s\n]+@[^\s\n]+)/i,
+    // "Customer: Name\n\nE-Mail: email" (3D Designer format)
+    /Customer\s*:\s*[^\n]+[\s\S]*?E-?[Mm]ail\s*:\s*([^\s\n]+@[^\s\n]+)/i,
   ];
+
   for (const pattern of emailPatterns) {
-    const match = body.match(pattern);
+    const match = text.match(pattern);
     if (match) {
       email = match[1].trim().toLowerCase();
       break;
@@ -109,26 +136,37 @@ function parseContactForm(body: string): { name: string; email: string } | null 
 
   if (!email) return null;
 
+  // Don't extract if the extracted email is also internal
+  if (isInternalEmail(email)) return null;
+
   // Try to find name
   const namePatterns = [
-    // "Voornaam: X\nAchternaam: Y"
+    // "Voornaam: X\nAchternaam: Y" (Teamleader form)
     /Voornaam\s*[:]\s*([^\n]+)[\s\S]*?Achternaam\s*[:]\s*([^\n]+)/i,
-    // "Naam\nValue"
-    /Naam\s*\n\s*([^\n]+)/i,
-    // "Naam: Value"
-    /Naam\s*[:]\s*([^\n]+)/i,
+    // "Customer: Name" (3D Designer English)
+    /Customer\s*[:]\s*([^\n]+)/i,
+    // "Naam\nValue" (Dutch contact form - value on next line)
+    /(?:^|\n)Naam\s*\n\s*([^\n]+)/i,
+    // "Name\nValue" (English contact form - value on next line)
+    /(?:^|\n)Name\s*\n\s*([^\n]+)/i,
+    // "Naam: Value" or "Naam : Value"
+    /(?:^|\n)Naam\s*[:]\s*([^\n]+)/i,
     // "Name: Value"
-    /Name\s*[:]\s*([^\n]+)/i,
+    /(?:^|\n)Name\s*[:]\s*([^\n]+)/i,
   ];
 
   for (const pattern of namePatterns) {
-    const match = body.match(pattern);
+    const match = text.match(pattern);
     if (match) {
       if (match[2]) {
         // Voornaam + Achternaam
         name = `${match[1].trim()} ${match[2].trim()}`;
       } else {
         name = match[1].trim();
+      }
+      // Don't use the email as name if pattern matched email field
+      if (name.includes('@')) {
+        name = '';
       }
       break;
     }
@@ -207,10 +245,27 @@ export async function syncMails() {
     const existing = getOne('SELECT id FROM timeline_events WHERE outlook_message_id = ?', [msg.id]);
     if (existing) continue;
 
-    // Check if this is a contact form email (extract real sender from body)
-    const contactForm = parseContactForm(msg.bodyPreview);
-    const senderEmail = contactForm ? contactForm.email : msg.from.emailAddress.address.toLowerCase();
-    const senderName = contactForm ? contactForm.name : msg.from.emailAddress.name;
+    // Determine the real sender
+    const fromEmail = msg.from.emailAddress.address.toLowerCase();
+    const fromName = msg.from.emailAddress.name;
+
+    // If the email is from an internal/system address, try to parse the contact form
+    let senderEmail = fromEmail;
+    let senderName = fromName;
+
+    if (isInternalEmail(fromEmail)) {
+      const contactForm = parseContactForm(msg.bodyPreview);
+      if (contactForm) {
+        senderEmail = contactForm.email;
+        senderName = contactForm.name;
+      } else {
+        // Internal email without parseable contact form data — skip
+        continue;
+      }
+    }
+
+    // Double-check: skip if sender is still internal after parsing
+    if (isInternalEmail(senderEmail)) continue;
 
     // Create or find customer — reactivate if archived
     d.run('INSERT OR IGNORE INTO customers (name, email) VALUES (?, ?)', [senderName, senderEmail]);

@@ -107,6 +107,18 @@ router.get('/debug/folders', async (_req, res) => {
   }
 });
 
+// Reset database — clears all customers and events for a fresh sync
+router.post('/reset', (_req, res) => {
+  try {
+    runQuery('DELETE FROM timeline_events', []);
+    runQuery('DELETE FROM customers', []);
+    runQuery("DELETE FROM sync_state WHERE key IN ('last_outlook_sync', 'last_teamleader_sync')", []);
+    res.json({ success: true, message: 'Database reset. Click Sync to re-import.' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/sync/status', (_req, res) => {
   const lastOutlook = getOne("SELECT value FROM sync_state WHERE key = 'last_outlook_sync'");
   const lastTeamleader = getOne("SELECT value FROM sync_state WHERE key = 'last_teamleader_sync'");
