@@ -66,17 +66,44 @@ router.post('/sync', async (_req, res) => {
 
 router.get('/debug/folders', async (_req, res) => {
   try {
-    const { listAllFolders } = await import('../services/outlook');
-    const folders = await listAllFolders();
-    res.json({ mailbox: process.env.OUTLOOK_MAILBOX || 'NOT SET', folders });
-  } catch (err: any) {
-    res.status(500).json({
-      error: err.message,
-      mailbox: process.env.OUTLOOK_MAILBOX || 'NOT SET',
-      clientId: process.env.AZURE_CLIENT_ID ? 'SET' : 'NOT SET',
-      tenantId: process.env.AZURE_TENANT_ID ? 'SET' : 'NOT SET',
-      clientSecret: process.env.AZURE_CLIENT_SECRET ? 'SET' : 'NOT SET',
+    const msal = await import('@azure/msal-node');
+    const clientId = process.env.AZURE_CLIENT_ID!;
+    const clientSecret = process.env.AZURE_CLIENT_SECRET!;
+    const tenantId = process.env.AZURE_TENANT_ID!;
+    const mailbox = process.env.OUTLOOK_MAILBOX || 'NOT SET';
+
+    const client = new msal.ConfidentialClientApplication({
+      auth: {
+        clientId,
+        authority: `https://login.microsoftonline.com/${tenantId}`,
+        clientSecret,
+      },
     });
+
+    const tokenResult = await client.acquireTokenByClientCredential({
+      scopes: ['https://graph.microsoft.com/.default'],
+    });
+
+    if (!tokenResult) {
+      return res.status(500).json({ error: 'Failed to get token', mailbox });
+    }
+
+    // Get top-level folders only
+    const foldersRes = await fetch(`https://graph.microsoft.com/v1.0/users/${mailbox}/mailFolders?$top=100`, {
+      headers: { Authorization: `Bearer ${tokenResult.accessToken}` },
+    });
+
+    if (!foldersRes.ok) {
+      const body = await foldersRes.text();
+      return res.status(500).json({ error: `Graph: ${foldersRes.status}`, body, mailbox });
+    }
+
+    const foldersData = await foldersRes.json();
+    const folderNames = foldersData.value.map((f: any) => ({ name: f.displayName, id: f.id, childCount: f.childFolderCount }));
+
+    res.json({ mailbox, folders: folderNames });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message, stack: err.stack?.substring(0, 500) });
   }
 });
 
