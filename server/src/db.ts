@@ -1,12 +1,12 @@
-import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
+import initSqlJs, { Database } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 
-let db: SqlJsDatabase;
+let db: Database;
 
 const dbPath = process.env.DATABASE_PATH || path.join(__dirname, '..', 'data', 'dashboard.db');
 
-export async function initDb(): Promise<SqlJsDatabase> {
+export async function initDb(): Promise<Database> {
   if (db) return db;
 
   const SQL = await initSqlJs();
@@ -78,7 +78,7 @@ export async function initDb(): Promise<SqlJsDatabase> {
   return db;
 }
 
-export function getDb(): SqlJsDatabase {
+export function getDb(): Database {
   if (!db) throw new Error('Database not initialized. Call initDb() first.');
   return db;
 }
