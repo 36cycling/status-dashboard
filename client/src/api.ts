@@ -49,6 +49,10 @@ export function getAuthStatus(): Promise<AuthStatus> {
   return request('/auth/status');
 }
 
+export function resetDatabase(): Promise<{ success: boolean; message: string }> {
+  return request('/reset', { method: 'POST' });
+}
+
 export function login(password: string): Promise<{ success: boolean }> {
   return request('/login', {
     method: 'POST',

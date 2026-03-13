@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Customer } from '../../../shared/types';
 import type { AuthStatus } from '../../../shared/types';
-import { getCustomers, archiveCustomer, syncNow, getAuthStatus, getSyncStatus } from '../api';
+import { getCustomers, archiveCustomer, syncNow, getAuthStatus, getSyncStatus, resetDatabase } from '../api';
 import CustomerRow from './CustomerRow';
 
 export default function Dashboard() {
@@ -43,6 +43,16 @@ export default function Dashboard() {
       setError(err.message);
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleReset = async () => {
+    if (!confirm('Weet je zeker dat je alle data wilt resetten? Je moet daarna opnieuw syncen.')) return;
+    try {
+      await resetDatabase();
+      await loadData();
+    } catch (err: any) {
+      setError(err.message);
     }
   };
 
@@ -90,13 +100,20 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* Sync button */}
+            {/* Sync & Reset buttons */}
             <button
               onClick={handleSync}
               disabled={syncing}
               className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
             >
               {syncing ? 'Synchroniseren...' : 'Sync nu'}
+            </button>
+            <button
+              onClick={handleReset}
+              className="px-3 py-1.5 bg-slate-200 text-slate-600 text-sm rounded-md hover:bg-red-100 hover:text-red-600"
+              title="Database resetten en opnieuw syncen"
+            >
+              Reset
             </button>
 
             {lastSync && (
