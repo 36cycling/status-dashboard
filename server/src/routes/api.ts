@@ -68,9 +68,15 @@ router.get('/debug/folders', async (_req, res) => {
   try {
     const { listAllFolders } = await import('../services/outlook');
     const folders = await listAllFolders();
-    res.json(folders);
+    res.json({ mailbox: process.env.OUTLOOK_MAILBOX || 'NOT SET', folders });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({
+      error: err.message,
+      mailbox: process.env.OUTLOOK_MAILBOX || 'NOT SET',
+      clientId: process.env.AZURE_CLIENT_ID ? 'SET' : 'NOT SET',
+      tenantId: process.env.AZURE_TENANT_ID ? 'SET' : 'NOT SET',
+      clientSecret: process.env.AZURE_CLIENT_SECRET ? 'SET' : 'NOT SET',
+    });
   }
 });
 
