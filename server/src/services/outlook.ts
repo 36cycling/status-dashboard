@@ -2,7 +2,6 @@ import * as msal from '@azure/msal-node';
 import { runQuery, getOne, getAll, saveDb, getDb } from '../db';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
-const SCOPES = ['https://graph.microsoft.com/Mail.ReadWrite.Shared'];
 
 let _msalClient: msal.ConfidentialClientApplication | null = null;
 
@@ -24,56 +23,23 @@ function getMsalClient(): msal.ConfidentialClientApplication {
   return _msalClient;
 }
 
-export function getAuthUrl(redirectUri: string): Promise<string> {
-  return getMsalClient().getAuthCodeUrl({
-    scopes: SCOPES,
-    redirectUri,
+// Client credentials flow - no user login needed
+async function getAppToken(): Promise<string> {
+  const result = await getMsalClient().acquireTokenByClientCredential({
+    scopes: ['https://graph.microsoft.com/.default'],
   });
-}
-
-export async function handleCallback(code: string, redirectUri: string) {
-  const result = await getMsalClient().acquireTokenByCode({
-    code,
-    scopes: SCOPES,
-    redirectUri,
-  });
-
-  const expiresAt = result.expiresOn?.toISOString() || new Date(Date.now() + 3600000).toISOString();
-
-  runQuery(
-    `INSERT OR REPLACE INTO auth_tokens (service, access_token, refresh_token, expires_at) VALUES (?, ?, ?, ?)`,
-    ['outlook', result.accessToken, '', expiresAt]
-  );
-
-  return result;
-}
-
-async function getAccessToken(): Promise<string | null> {
-  const row = getOne('SELECT * FROM auth_tokens WHERE service = ?', ['outlook']);
-  if (!row) return null;
-
-  if (row.expires_at && new Date(row.expires_at as string) < new Date()) {
-    try {
-      const accounts = await getMsalClient().getTokenCache().getAllAccounts();
-      if (accounts.length > 0) {
-        const result = await getMsalClient().acquireTokenSilent({
-          account: accounts[0],
-          scopes: SCOPES,
-        });
-        if (result) {
-          runQuery(
-            `INSERT OR REPLACE INTO auth_tokens (service, access_token, refresh_token, expires_at) VALUES (?, ?, ?, ?)`,
-            ['outlook', result.accessToken, '', result.expiresOn?.toISOString() || '']
-          );
-          return result.accessToken;
-        }
-      }
-    } catch {
-      return null;
-    }
+  if (!result || !result.accessToken) {
+    throw new Error('Failed to acquire app token');
   }
+  return result.accessToken;
+}
 
-  return row.access_token as string;
+function getMailboxPath(): string {
+  const targetMailbox = process.env.OUTLOOK_MAILBOX || '';
+  if (!targetMailbox) {
+    throw new Error('OUTLOOK_MAILBOX environment variable not set. Set it to the email address to read (e.g. info@36cycling.com).');
+  }
+  return `/users/${targetMailbox}`;
 }
 
 async function graphRequest(path: string, token: string): Promise<any> {
@@ -81,26 +47,27 @@ async function graphRequest(path: string, token: string): Promise<any> {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) {
-    throw new Error(`Graph API error: ${res.status} ${res.statusText}`);
+    const body = await res.text();
+    throw new Error(`Graph API error: ${res.status} ${res.statusText} - ${body}`);
   }
   return res.json();
 }
 
 export async function isConnected(): Promise<boolean> {
   try {
-    const token = await getAccessToken();
-    return token !== null;
+    const clientId = process.env.AZURE_CLIENT_ID;
+    const clientSecret = process.env.AZURE_CLIENT_SECRET;
+    const tenantId = process.env.AZURE_TENANT_ID;
+    const mailbox = process.env.OUTLOOK_MAILBOX;
+    return !!(clientId && clientSecret && tenantId && mailbox);
   } catch {
     return false;
   }
 }
 
 export async function listAllFolders(): Promise<any[]> {
-  const token = await getAccessToken();
-  if (!token) throw new Error('Outlook not connected');
-
-  const targetMailbox = process.env.OUTLOOK_MAILBOX || '';
-  const mailboxPath = targetMailbox ? `/users/${targetMailbox}` : '/me';
+  const token = await getAppToken();
+  const mailboxPath = getMailboxPath();
 
   const folders = await graphRequest(`${mailboxPath}/mailFolders?$top=100`, token);
   const result: any[] = [];
@@ -135,12 +102,9 @@ interface GraphMailFolder {
 }
 
 export async function syncMails() {
-  const token = await getAccessToken();
-  if (!token) throw new Error('Outlook not connected');
-
+  const token = await getAppToken();
+  const mailboxPath = getMailboxPath();
   const folderName = process.env.OUTLOOK_FOLDER_NAME || 'Klantaanvragen';
-  const targetMailbox = process.env.OUTLOOK_MAILBOX || '';
-  const mailboxPath = targetMailbox ? `/users/${targetMailbox}` : '/me';
 
   // Find the target folder (also search in child folders of Inbox)
   const folders = await graphRequest(`${mailboxPath}/mailFolders?$top=100`, token);
