@@ -95,6 +95,30 @@ export async function isConnected(): Promise<boolean> {
   }
 }
 
+export async function listAllFolders(): Promise<any[]> {
+  const token = await getAccessToken();
+  if (!token) throw new Error('Outlook not connected');
+
+  const targetMailbox = process.env.OUTLOOK_MAILBOX || '';
+  const mailboxPath = targetMailbox ? `/users/${targetMailbox}` : '/me';
+
+  const folders = await graphRequest(`${mailboxPath}/mailFolders?$top=100`, token);
+  const result: any[] = [];
+
+  for (const f of folders.value) {
+    const entry: any = { name: f.displayName, id: f.id, children: [] };
+    try {
+      const children = await graphRequest(`${mailboxPath}/mailFolders/${f.id}/childFolders?$top=100`, token);
+      entry.children = children.value.map((c: any) => ({ name: c.displayName, id: c.id }));
+    } catch {
+      // no children
+    }
+    result.push(entry);
+  }
+
+  return result;
+}
+
 interface GraphMessage {
   id: string;
   subject: string;

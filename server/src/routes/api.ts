@@ -64,6 +64,16 @@ router.post('/sync', async (_req, res) => {
   }
 });
 
+router.get('/debug/folders', async (_req, res) => {
+  try {
+    const { listAllFolders } = await import('../services/outlook');
+    const folders = await listAllFolders();
+    res.json(folders);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/sync/status', (_req, res) => {
   const lastOutlook = getOne("SELECT value FROM sync_state WHERE key = 'last_outlook_sync'");
   const lastTeamleader = getOne("SELECT value FROM sync_state WHERE key = 'last_teamleader_sync'");
