@@ -118,9 +118,23 @@ export async function syncMails() {
   const targetMailbox = process.env.OUTLOOK_MAILBOX || '';
   const mailboxPath = targetMailbox ? `/users/${targetMailbox}` : '/me';
 
-  // Find the target folder
+  // Find the target folder (also search in child folders of Inbox)
   const folders = await graphRequest(`${mailboxPath}/mailFolders?$top=100`, token);
-  const folder = folders.value.find((f: GraphMailFolder) => f.displayName === folderName);
+  let folder = folders.value.find((f: GraphMailFolder) => f.displayName === folderName);
+
+  if (!folder) {
+    // Search in child folders of each top-level folder (e.g. Inbox subfolders)
+    for (const parentFolder of folders.value) {
+      try {
+        const children = await graphRequest(`${mailboxPath}/mailFolders/${parentFolder.id}/childFolders?$top=100`, token);
+        folder = children.value.find((f: GraphMailFolder) => f.displayName === folderName);
+        if (folder) break;
+      } catch {
+        // No child folders, continue
+      }
+    }
+  }
+
   if (!folder) throw new Error(`Mail folder "${folderName}" not found`);
 
   // Get messages from the folder
