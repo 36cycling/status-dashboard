@@ -76,7 +76,7 @@ async function getAccessToken(): Promise<string | null> {
   return row.access_token as string;
 }
 
-async function graphRequest(path: string, token: string) {
+async function graphRequest(path: string, token: string): Promise<any> {
   const res = await fetch(`${GRAPH_BASE}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   });

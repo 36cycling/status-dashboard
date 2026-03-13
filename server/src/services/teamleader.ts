@@ -28,7 +28,7 @@ export async function handleCallback(code: string, redirectUri: string) {
 
   if (!res.ok) throw new Error(`Teamleader token error: ${res.status}`);
 
-  const data = await res.json();
+  const data: any = await res.json();
   const expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString();
 
   runQuery(
@@ -59,7 +59,7 @@ async function getAccessToken(): Promise<string | null> {
 
     if (!res.ok) return null;
 
-    const data = await res.json();
+    const data: any = await res.json();
     const expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString();
 
     runQuery(
@@ -73,7 +73,7 @@ async function getAccessToken(): Promise<string | null> {
   return row.access_token as string;
 }
 
-async function tlRequest(path: string, body: Record<string, unknown>) {
+async function tlRequest(path: string, body: Record<string, unknown>): Promise<any> {
   const token = await getAccessToken();
   if (!token) throw new Error('Teamleader not connected');
 
