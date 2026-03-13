@@ -98,7 +98,7 @@ router.get('/debug/folders', async (_req, res) => {
       return res.status(500).json({ error: `Graph: ${foldersRes.status}`, body, mailbox });
     }
 
-    const foldersData = await foldersRes.json();
+    const foldersData: any = await foldersRes.json();
     const folderNames = foldersData.value.map((f: any) => ({ name: f.displayName, id: f.id, childCount: f.childFolderCount }));
 
     res.json({ mailbox, folders: folderNames });
