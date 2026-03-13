@@ -6,7 +6,14 @@ import { syncTeamleaderForCustomers } from '../services/teamleader';
 const router = Router();
 
 router.get('/customers', (_req, res) => {
-  const customers = getAll('SELECT * FROM customers WHERE archived = 0 ORDER BY created_at DESC');
+  const customers = getAll(`
+    SELECT c.*, MAX(e.date) as last_activity
+    FROM customers c
+    LEFT JOIN timeline_events e ON e.customer_id = c.id
+    WHERE c.archived = 0
+    GROUP BY c.id
+    ORDER BY last_activity DESC NULLS LAST
+  `);
 
   const result = customers.map((c) => ({
     ...c,

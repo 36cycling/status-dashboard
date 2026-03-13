@@ -97,7 +97,7 @@ export async function isConnected(): Promise<boolean> {
   return token !== null;
 }
 
-export async function findContact(email: string): Promise<{ id: string; name: string } | null> {
+export async function findContact(email: string): Promise<{ id: string; name: string; createdAt: string } | null> {
   try {
     const result = await tlRequest('/contacts.list', {
       filter: {
@@ -113,6 +113,7 @@ export async function findContact(email: string): Promise<{ id: string; name: st
       return {
         id: contact.id,
         name: `${contact.first_name} ${contact.last_name}`.trim(),
+        createdAt: contact.added_at || contact.created_at || new Date().toISOString(),
       };
     }
     return null;
@@ -121,7 +122,7 @@ export async function findContact(email: string): Promise<{ id: string; name: st
   }
 }
 
-export async function findDeals(contactId: string): Promise<Array<{ id: string; title: string; status: string }>> {
+export async function findDeals(contactId: string): Promise<Array<{ id: string; title: string; status: string; createdAt: string }>> {
   try {
     const result = await tlRequest('/deals.list', {
       filter: {
@@ -137,6 +138,7 @@ export async function findDeals(contactId: string): Promise<Array<{ id: string; 
         id: deal.id,
         title: deal.title,
         status: deal.status,
+        createdAt: deal.created_at || new Date().toISOString(),
       }));
     }
     return [];
@@ -164,8 +166,8 @@ export async function syncTeamleaderForCustomers() {
 
     if (!existingContact) {
       d.run(
-        "INSERT INTO timeline_events (customer_id, type, subject, summary, date, is_replied, outlook_message_id, metadata) VALUES (?, 'tl_contact', ?, ?, datetime('now'), 0, NULL, ?)",
-        [customer.id, 'Contact in Teamleader', `Contact aangemaakt: ${contact.name}`, JSON.stringify({ tl_id: contact.id })]
+        "INSERT INTO timeline_events (customer_id, type, subject, summary, date, is_replied, outlook_message_id, metadata) VALUES (?, 'tl_contact', ?, ?, ?, 0, NULL, ?)",
+        [customer.id, 'Contact in Teamleader', `Contact aangemaakt: ${contact.name}`, contact.createdAt, JSON.stringify({ tl_id: contact.id })]
       );
     }
 
@@ -179,8 +181,8 @@ export async function syncTeamleaderForCustomers() {
 
       if (!existingDeal) {
         d.run(
-          "INSERT INTO timeline_events (customer_id, type, subject, summary, date, is_replied, outlook_message_id, metadata) VALUES (?, 'tl_deal', ?, ?, datetime('now'), 0, NULL, ?)",
-          [customer.id, `Deal: ${deal.title}`, `Deal status: ${deal.status}`, JSON.stringify({ tl_id: deal.id, status: deal.status })]
+          "INSERT INTO timeline_events (customer_id, type, subject, summary, date, is_replied, outlook_message_id, metadata) VALUES (?, 'tl_deal', ?, ?, ?, 0, NULL, ?)",
+          [customer.id, `Deal: ${deal.title}`, `Deal status: ${deal.status}`, deal.createdAt, JSON.stringify({ tl_id: deal.id, status: deal.status })]
         );
       }
     }
