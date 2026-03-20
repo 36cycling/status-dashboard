@@ -33,60 +33,101 @@ function isInternalEmail(email: string): boolean {
   );
 }
 
-// Domains that are never customer inquiries
-const BULK_DOMAINS = [
-  'mailchimp.com', 'sendinblue.com', 'brevo.com', 'mailgun.com',
-  'sendgrid.net', 'constantcontact.com', 'hubspot.com', 'klaviyo.com',
-  'mailerlite.com', 'campaignmonitor.com', 'exactonline.nl', 'exact.nl',
-  'mollie.com', 'stripe.com', 'paypal.com', 'tikkie.me',
-  'google.com', 'microsoft.com', 'linkedin.com', 'facebook.com',
-  'instagram.com', 'twitter.com', 'tiktok.com',
-  'teamleader.eu', 'teamleader.be',
-  'lightspeedhq.com', 'lightspeed.com', 'shopify.com',
-  'postnl.nl', 'dhl.com', 'dpd.nl', 'ups.com', 'fedex.com',
+// ── Inbox heuristic filter ──
+// Approach: ONLY allow emails that look like a real person asking a question.
+// Everything else is excluded.
+
+// Personal email providers — these are almost always real people
+const PERSONAL_DOMAINS = [
+  'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'hotmail.nl',
+  'live.com', 'live.nl', 'msn.com', 'yahoo.com', 'yahoo.nl',
+  'icloud.com', 'me.com', 'mac.com', 'protonmail.com', 'proton.me',
+  'ziggo.nl', 'kpnmail.nl', 'xs4all.nl', 'hetnet.nl', 'home.nl',
+  'planet.nl', 'upcmail.nl', 'casema.nl', 'chello.nl', 'quicknet.nl',
+  'tele2.nl', 'telfort.nl', 'online.nl', 'solcon.nl', 'wxs.nl',
 ];
 
-// Generic sender prefixes that are usually automated/system emails
-const GENERIC_PREFIXES = [
+// Domains that are NEVER customer inquiries (companies/systems)
+const BLOCKED_DOMAINS = [
+  // Bulk mail / marketing
+  'mailchimp.com', 'sendinblue.com', 'brevo.com', 'mailgun.com', 'mailgun.org',
+  'sendgrid.net', 'constantcontact.com', 'hubspot.com', 'hubspotmail.com', 'klaviyo.com',
+  'mailerlite.com', 'campaignmonitor.com', 'activecampaign.com',
+  // Financial / payment
+  'exactonline.nl', 'exact.nl', 'mollie.com', 'stripe.com', 'paypal.com',
+  'paypal.nl', 'tikkie.me', 'adyen.com',
+  // Big tech / social
+  'google.com', 'microsoft.com', 'linkedin.com', 'facebook.com', 'facebookmail.com',
+  'instagram.com', 'twitter.com', 'tiktok.com', 'apple.com',
+  // CRM / tools
+  'teamleader.eu', 'teamleader.be', 'salesforce.com',
+  // E-commerce / platforms
+  'lightspeedhq.com', 'lightspeed.com', 'shopify.com', 'bol.com',
+  'amazon.com', 'amazon.nl', 'coolblue.nl', 'zalando.nl',
+  // Shipping / logistics
+  'postnl.nl', 'postnl.com', 'dhl.com', 'dpd.nl', 'ups.com', 'fedex.com',
+  'gls-group.eu', 'budbee.com', 'trunkrs.nl',
+  // Telecom / utilities
+  'kpn.com', 'kpn.nl', 'vodafone.nl', 'vodafone.com', 't-mobile.nl',
+  'ziggo.com', 'odido.nl',
+  // Software / IT
+  'sap.com', 'oracle.com', 'atlassian.com', 'jira.com', 'slack.com',
+  'zendesk.com', 'freshdesk.com', 'intercom.com', 'github.com',
+  // Government / organizations
+  'belastingdienst.nl', 'kvk.nl', 'uwv.nl', 'rijksoverheid.nl',
+];
+
+// Sender prefixes that are always automated
+const BLOCKED_PREFIXES = [
   'noreply', 'no-reply', 'no_reply', 'donotreply', 'do-not-reply',
-  'mailer-daemon', 'postmaster', 'bounce', 'notifications',
+  'mailer-daemon', 'postmaster', 'bounce', 'notifications', 'notification',
   'newsletter', 'nieuwsbrief', 'marketing', 'billing', 'invoice',
-  'support', 'helpdesk', 'service', 'admin', 'system',
+  'helpdesk', 'admin', 'system', 'alert', 'alerts', 'news',
+  'updates', 'info', 'klantenservice', 'customerservice', 'webmaster',
+  'orders', 'order', 'shipping', 'delivery', 'tracking',
 ];
 
 // Subject keywords that indicate non-inquiry emails
-const EXCLUDE_SUBJECT_KEYWORDS = [
-  'factuur', 'invoice', 'betaling', 'payment', 'creditnota',
+const BLOCKED_SUBJECTS = [
+  'factuur', 'invoice', 'betaling', 'payment', 'creditnota', 'credit nota',
   'newsletter', 'nieuwsbrief', 'unsubscribe', 'afmelden', 'uitschrijven',
-  'order bevestiging', 'orderbevestiging', 'order confirmation',
-  'verzending', 'tracking', 'shipment', 'delivered', 'afgeleverd',
-  'wachtwoord', 'password reset', 'verificatie', 'verification',
+  'order bevestiging', 'orderbevestiging', 'order confirmation', 'bestelling',
+  'verzending', 'tracking', 'shipment', 'delivered', 'afgeleverd', 'pakket',
+  'wachtwoord', 'password', 'verificatie', 'verification', 'verify',
   'out of office', 'automatisch antwoord', 'auto-reply', 'afwezigheid',
+  'welkom bij', 'welcome to', 'bevestig je', 'confirm your',
+  'your account', 'je account', 'inloggen', 'login', 'sign in',
+  'abonnement', 'subscription', 'renewal', 'verlenging',
 ];
 
 function isLikelyInquiry(msg: GraphMessage): boolean {
   const fromEmail = msg.from.emailAddress.address.toLowerCase();
-  const fromName = msg.from.emailAddress.name.toLowerCase();
-  const subject = msg.subject.toLowerCase();
+  const subject = (msg.subject || '').toLowerCase();
+  const domain = fromEmail.split('@')[1] || '';
+  const localPart = fromEmail.split('@')[0] || '';
 
-  // Skip internal emails
+  // Always skip internal emails
   if (isInternalEmail(fromEmail)) return false;
 
-  // Skip bulk/system domains
-  const domain = fromEmail.split('@')[1] || '';
-  if (BULK_DOMAINS.some(d => domain === d || domain.endsWith('.' + d))) return false;
+  // Always skip blocked domains
+  if (BLOCKED_DOMAINS.some(d => domain === d || domain.endsWith('.' + d))) return false;
 
-  // Skip generic sender prefixes
-  const localPart = fromEmail.split('@')[0] || '';
-  if (GENERIC_PREFIXES.some(p => localPart === p || localPart.startsWith(p + '.'))) return false;
+  // Always skip blocked prefixes
+  if (BLOCKED_PREFIXES.some(p => localPart === p || localPart.startsWith(p + '.') || localPart.startsWith(p + '-') || localPart.startsWith(p + '_'))) return false;
 
-  // Skip based on subject keywords
-  if (EXCLUDE_SUBJECT_KEYWORDS.some(kw => subject.includes(kw))) return false;
+  // Always skip blocked subjects
+  if (BLOCKED_SUBJECTS.some(kw => subject.includes(kw))) return false;
 
-  // Skip if sender name looks automated
-  if (fromName.includes('mailer') || fromName.includes('daemon') || fromName.includes('notification')) return false;
+  // Personal email domains are always OK (real people)
+  if (PERSONAL_DOMAINS.includes(domain)) return true;
 
-  return true;
+  // For business domains: only allow if sender looks like a person
+  // (has a first.last or firstname pattern, not a generic prefix)
+  const looksLikePerson = localPart.includes('.') || localPart.includes('_') || /^[a-z]{2,15}$/.test(localPart);
+  if (looksLikePerson) return true;
+
+  // Everything else: skip
+  return false;
 }
 
 let _msalClient: msal.ConfidentialClientApplication | null = null;
@@ -380,7 +421,19 @@ export async function syncMails() {
       d.run('UPDATE customers SET archived = 0 WHERE id = ?', [customer.id]);
     }
 
-    const isReplied = repliedConversations.has(msg.conversationId);
+    // Check reply: first by conversationId, then fallback by recipient email
+    let isReplied = repliedConversations.has(msg.conversationId);
+    let reply = isReplied
+      ? allSentItems.find((s: any) => s.conversationId === msg.conversationId)
+      : null;
+
+    // Fallback: find a sent item TO this customer's email address
+    if (!isReplied) {
+      reply = allSentItems.find((s: any) =>
+        s.toRecipients?.some((r: any) => r.emailAddress?.address?.toLowerCase() === senderEmail)
+      );
+      if (reply) isReplied = true;
+    }
 
     d.run(
       'INSERT INTO timeline_events (customer_id, type, subject, summary, date, is_replied, outlook_message_id, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
@@ -388,8 +441,7 @@ export async function syncMails() {
     );
 
     // If replied, also add the sent reply as an event
-    if (isReplied) {
-      const reply = allSentItems.find((s: any) => s.conversationId === msg.conversationId);
+    if (isReplied && reply) {
       if (reply) {
         const existingReply = getOne('SELECT id FROM timeline_events WHERE outlook_message_id = ?', [reply.id]);
         if (!existingReply) {
@@ -438,8 +490,21 @@ export async function syncMails() {
       }
     }
 
-    if (convId && sentByConversation.has(convId)) {
-      const reply = sentByConversation.get(convId);
+    // Try conversationId match first
+    let reply = convId ? sentByConversation.get(convId) : undefined;
+
+    // Fallback: match by recipient email
+    if (!reply) {
+      const customer = getOne('SELECT email FROM customers WHERE id = ?', [ev.customer_id]);
+      if (customer) {
+        const custEmail = (customer.email as string).toLowerCase();
+        reply = allSentItems.find((s: any) =>
+          s.toRecipients?.some((r: any) => r.emailAddress?.address?.toLowerCase() === custEmail)
+        );
+      }
+    }
+
+    if (reply) {
       // Mark as replied
       d.run('UPDATE timeline_events SET is_replied = 1 WHERE id = ?', [ev.id]);
 
