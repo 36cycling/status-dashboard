@@ -6,11 +6,12 @@ import { syncTeamleaderForCustomers } from '../services/teamleader';
 const router = Router();
 
 router.get('/customers', (_req, res) => {
+  // Get all customers that have events after their dismissed_at (or were never dismissed)
   const customers = getAll(`
     SELECT c.*, MAX(e.date) as last_activity
     FROM customers c
-    LEFT JOIN timeline_events e ON e.customer_id = c.id
-    WHERE c.archived = 0
+    INNER JOIN timeline_events e ON e.customer_id = c.id
+    WHERE (c.dismissed_at IS NULL OR e.date > c.dismissed_at)
     GROUP BY c.id
     ORDER BY last_activity DESC NULLS LAST
   `);
@@ -18,7 +19,11 @@ router.get('/customers', (_req, res) => {
   const result = customers.map((c) => ({
     ...c,
     archived: Boolean(c.archived),
-    events: getAll('SELECT * FROM timeline_events WHERE customer_id = ? ORDER BY date DESC', [c.id]).map((e) => ({
+    // Only show events after dismissed_at
+    events: getAll(
+      'SELECT * FROM timeline_events WHERE customer_id = ? AND (? IS NULL OR date > ?) ORDER BY date DESC',
+      [c.id, c.dismissed_at, c.dismissed_at]
+    ).map((e) => ({
       ...e,
       is_replied: Boolean(e.is_replied),
       metadata: JSON.parse((e.metadata as string) || '{}'),
@@ -45,12 +50,12 @@ router.get('/customers/archived', (_req, res) => {
 });
 
 router.post('/customers/:id/archive', (req, res) => {
-  runQuery('UPDATE customers SET archived = 1 WHERE id = ?', [Number(req.params.id)]);
+  runQuery('UPDATE customers SET dismissed_at = datetime(\'now\') WHERE id = ?', [Number(req.params.id)]);
   res.json({ success: true });
 });
 
 router.post('/customers/:id/unarchive', (req, res) => {
-  runQuery('UPDATE customers SET archived = 0 WHERE id = ?', [Number(req.params.id)]);
+  runQuery('UPDATE customers SET dismissed_at = NULL WHERE id = ?', [Number(req.params.id)]);
   res.json({ success: true });
 });
 
@@ -114,12 +119,18 @@ router.get('/debug/folders', async (_req, res) => {
   }
 });
 
-// Reset database — clears all customers and events for a fresh sync
+// Reset database — clears events and sync state, but preserves dismissed_at
 router.post('/reset', (_req, res) => {
   try {
+    // Save dismissed customers before reset
+    const dismissed = getAll('SELECT email, dismissed_at FROM customers WHERE dismissed_at IS NOT NULL');
     runQuery('DELETE FROM timeline_events', []);
     runQuery('DELETE FROM customers', []);
     runQuery("DELETE FROM sync_state WHERE key IN ('last_outlook_sync', 'last_teamleader_sync')", []);
+    // Restore dismissed_at for known emails
+    for (const d of dismissed) {
+      runQuery('INSERT OR IGNORE INTO customers (name, email, dismissed_at) VALUES (?, ?, ?)', ['', d.email, d.dismissed_at]);
+    }
     res.json({ success: true, message: 'Database reset. Click Sync to re-import.' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

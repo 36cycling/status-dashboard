@@ -69,6 +69,9 @@ export async function initDb(): Promise<Database> {
     )
   `);
 
+  // Migrations
+  try { db.run('ALTER TABLE customers ADD COLUMN dismissed_at TEXT DEFAULT NULL'); } catch {}
+
   // Create indexes (ignore if exist)
   try { db.run('CREATE INDEX idx_events_customer ON timeline_events(customer_id)'); } catch {}
   try { db.run('CREATE INDEX idx_events_message_id ON timeline_events(outlook_message_id)'); } catch {}
