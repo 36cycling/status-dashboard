@@ -113,6 +113,22 @@ export async function debugContactRaw(email: string): Promise<any> {
   }
 }
 
+export async function debugDealsRaw(contactId: string): Promise<any> {
+  try {
+    return await tlRequest('/deals.list', {
+      filter: {
+        customer: {
+          type: 'contact',
+          id: contactId,
+        },
+      },
+      include: 'responsible_user',
+    });
+  } catch (err: any) {
+    return { error: err.message };
+  }
+}
+
 export async function findContact(email: string): Promise<{ id: string; name: string; createdAt: string; responsibleUser: string | null } | null> {
   try {
     const result = await tlRequest('/contacts.list', {
