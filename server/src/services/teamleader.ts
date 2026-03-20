@@ -115,7 +115,7 @@ export async function debugContactRaw(email: string): Promise<any> {
 
 export async function debugDealsRaw(contactId: string): Promise<any> {
   try {
-    return await tlRequest('/deals.list', {
+    const list = await tlRequest('/deals.list', {
       filter: {
         customer: {
           type: 'contact',
@@ -124,6 +124,18 @@ export async function debugDealsRaw(contactId: string): Promise<any> {
       },
       include: 'responsible_user',
     });
+
+    // Also try deals.info for the first deal to see all fields
+    let dealInfo = null;
+    if (list.data && list.data.length > 0) {
+      try {
+        dealInfo = await tlRequest('/deals.info', { id: list.data[0].id });
+      } catch (e: any) {
+        dealInfo = { error: e.message };
+      }
+    }
+
+    return { list, dealInfo };
   } catch (err: any) {
     return { error: err.message };
   }
