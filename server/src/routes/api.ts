@@ -136,6 +136,84 @@ router.get('/sync/status', (_req, res) => {
   });
 });
 
+router.get('/debug/reply-check', async (req, res) => {
+  try {
+    const email = req.query.email as string;
+    if (!email) return res.json({ error: 'Pass ?email=someone@example.com' });
+
+    const customer = getOne('SELECT * FROM customers WHERE email = ?', [email]);
+    if (!customer) return res.json({ error: 'Customer not found' });
+
+    // Get customer's email_in events with conversationId
+    const events = getAll(
+      "SELECT id, subject, date, is_replied, outlook_message_id FROM timeline_events WHERE customer_id = ? AND type = 'email_in' ORDER BY date DESC",
+      [customer.id]
+    );
+
+    // Check sent items from all mailboxes
+    const msal = await import('@azure/msal-node');
+    const client = new msal.ConfidentialClientApplication({
+      auth: {
+        clientId: process.env.AZURE_CLIENT_ID!,
+        authority: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}`,
+        clientSecret: process.env.AZURE_CLIENT_SECRET!,
+      },
+    });
+    const tokenResult = await client.acquireTokenByClientCredential({
+      scopes: ['https://graph.microsoft.com/.default'],
+    });
+    if (!tokenResult) return res.status(500).json({ error: 'No token' });
+    const token = tokenResult.accessToken;
+
+    const REPLY_MAILBOXES = ['info@36cycling.com', 'jeroen@36cycling.com', 'lisette@36cycling.com', 'michael@36cycling.com', 'lars@36cycling.com'];
+    const mailbox = process.env.OUTLOOK_MAILBOX || 'info@36cycling.com';
+
+    // Get the original message details (conversationId)
+    const results: any[] = [];
+    for (const ev of events) {
+      let msgDetail: any = null;
+      try {
+        const msgRes = await fetch(`https://graph.microsoft.com/v1.0/users/${mailbox}/messages/${ev.outlook_message_id}?$select=conversationId,subject,from`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (msgRes.ok) msgDetail = await msgRes.json();
+      } catch {}
+
+      // Search for replies in all mailboxes
+      const repliesFound: any[] = [];
+      if (msgDetail?.conversationId) {
+        for (const mb of REPLY_MAILBOXES) {
+          try {
+            const filter = `conversationId eq '${msgDetail.conversationId}'`;
+            const sentRes = await fetch(`https://graph.microsoft.com/v1.0/users/${mb}/mailFolders('SentItems')/messages?$filter=${encodeURIComponent(filter)}&$select=subject,sentDateTime,from&$top=5`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (sentRes.ok) {
+              const sentData: any = await sentRes.json();
+              for (const s of sentData.value) {
+                repliesFound.push({ mailbox: mb, subject: s.subject, sentAt: s.sentDateTime, from: s.from?.emailAddress?.name });
+              }
+            }
+          } catch {}
+        }
+      }
+
+      results.push({
+        eventId: ev.id,
+        subject: ev.subject,
+        date: ev.date,
+        is_replied: Boolean(ev.is_replied),
+        conversationId: msgDetail?.conversationId || 'NOT_FOUND',
+        repliesFound,
+      });
+    }
+
+    res.json({ customer: { name: customer.name, email: customer.email }, results });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/debug/events', (_req, res) => {
   const events = getAll("SELECT id, type, metadata FROM timeline_events WHERE type IN ('tl_contact', 'tl_deal', 'email_out') ORDER BY id DESC LIMIT 20");
   res.json(events.map(e => ({ ...e, metadata: JSON.parse((e.metadata as string) || '{}') })));
