@@ -33,6 +33,62 @@ function isInternalEmail(email: string): boolean {
   );
 }
 
+// Domains that are never customer inquiries
+const BULK_DOMAINS = [
+  'mailchimp.com', 'sendinblue.com', 'brevo.com', 'mailgun.com',
+  'sendgrid.net', 'constantcontact.com', 'hubspot.com', 'klaviyo.com',
+  'mailerlite.com', 'campaignmonitor.com', 'exactonline.nl', 'exact.nl',
+  'mollie.com', 'stripe.com', 'paypal.com', 'tikkie.me',
+  'google.com', 'microsoft.com', 'linkedin.com', 'facebook.com',
+  'instagram.com', 'twitter.com', 'tiktok.com',
+  'teamleader.eu', 'teamleader.be',
+  'lightspeedhq.com', 'lightspeed.com', 'shopify.com',
+  'postnl.nl', 'dhl.com', 'dpd.nl', 'ups.com', 'fedex.com',
+];
+
+// Generic sender prefixes that are usually automated/system emails
+const GENERIC_PREFIXES = [
+  'noreply', 'no-reply', 'no_reply', 'donotreply', 'do-not-reply',
+  'mailer-daemon', 'postmaster', 'bounce', 'notifications',
+  'newsletter', 'nieuwsbrief', 'marketing', 'billing', 'invoice',
+  'support', 'helpdesk', 'service', 'admin', 'system',
+];
+
+// Subject keywords that indicate non-inquiry emails
+const EXCLUDE_SUBJECT_KEYWORDS = [
+  'factuur', 'invoice', 'betaling', 'payment', 'creditnota',
+  'newsletter', 'nieuwsbrief', 'unsubscribe', 'afmelden', 'uitschrijven',
+  'order bevestiging', 'orderbevestiging', 'order confirmation',
+  'verzending', 'tracking', 'shipment', 'delivered', 'afgeleverd',
+  'wachtwoord', 'password reset', 'verificatie', 'verification',
+  'out of office', 'automatisch antwoord', 'auto-reply', 'afwezigheid',
+];
+
+function isLikelyInquiry(msg: GraphMessage): boolean {
+  const fromEmail = msg.from.emailAddress.address.toLowerCase();
+  const fromName = msg.from.emailAddress.name.toLowerCase();
+  const subject = msg.subject.toLowerCase();
+
+  // Skip internal emails
+  if (isInternalEmail(fromEmail)) return false;
+
+  // Skip bulk/system domains
+  const domain = fromEmail.split('@')[1] || '';
+  if (BULK_DOMAINS.some(d => domain === d || domain.endsWith('.' + d))) return false;
+
+  // Skip generic sender prefixes
+  const localPart = fromEmail.split('@')[0] || '';
+  if (GENERIC_PREFIXES.some(p => localPart === p || localPart.startsWith(p + '.'))) return false;
+
+  // Skip based on subject keywords
+  if (EXCLUDE_SUBJECT_KEYWORDS.some(kw => subject.includes(kw))) return false;
+
+  // Skip if sender name looks automated
+  if (fromName.includes('mailer') || fromName.includes('daemon') || fromName.includes('notification')) return false;
+
+  return true;
+}
+
 let _msalClient: msal.ConfidentialClientApplication | null = null;
 
 function getMsalClient(): msal.ConfidentialClientApplication {
@@ -221,18 +277,47 @@ export async function syncMails() {
     }
   }
 
-  if (!folder) throw new Error(`Mail folder "${folderName}" not found`);
-
   // Only fetch mails from the last 2 months
   const twoMonthsAgo = new Date();
   twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
   const dateFilter = `receivedDateTime ge ${twoMonthsAgo.toISOString()}`;
+  const selectFields = '$select=id,subject,bodyPreview,receivedDateTime,from,isRead,conversationId';
 
-  // Get messages from the folder
-  const messages = await graphRequest(
-    `${mailboxPath}/mailFolders/${folder.id}/messages?$top=200&$orderby=receivedDateTime desc&$filter=${encodeURIComponent(dateFilter)}&$select=id,subject,bodyPreview,receivedDateTime,from,isRead,conversationId`,
-    token
-  );
+  // Collect all messages from multiple sources
+  const allMessages: GraphMessage[] = [];
+  const seenMessageIds = new Set<string>();
+
+  // Source 1: Klantaanvragen folder (trusted — all emails are inquiries)
+  if (folder) {
+    const folderMessages = await graphRequest(
+      `${mailboxPath}/mailFolders/${folder.id}/messages?$top=200&$orderby=receivedDateTime desc&$filter=${encodeURIComponent(dateFilter)}&${selectFields}`,
+      token
+    );
+    for (const msg of folderMessages.value) {
+      if (!seenMessageIds.has(msg.id)) {
+        seenMessageIds.add(msg.id);
+        allMessages.push(msg);
+      }
+    }
+  }
+
+  // Source 2: Inbox — heuristically filtered for likely inquiries
+  try {
+    const inboxMessages = await graphRequest(
+      `${mailboxPath}/mailFolders('Inbox')/messages?$top=200&$orderby=receivedDateTime desc&$filter=${encodeURIComponent(dateFilter)}&${selectFields}`,
+      token
+    );
+    for (const msg of inboxMessages.value as GraphMessage[]) {
+      if (!seenMessageIds.has(msg.id) && isLikelyInquiry(msg)) {
+        seenMessageIds.add(msg.id);
+        allMessages.push(msg);
+      }
+    }
+  } catch {
+    // Inbox not accessible, continue with folder only
+  }
+
+  const messages = { value: allMessages };
 
   // Get sent items from ALL internal mailboxes to match replies (also last 2 months)
   const sentDateFilter = `sentDateTime ge ${twoMonthsAgo.toISOString()}`;
