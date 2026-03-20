@@ -186,6 +186,7 @@ export async function findDeals(contactId: string): Promise<Array<{ id: string; 
           id: contactId,
         },
       },
+      include: 'responsible_user',
     });
 
     if (!listResult.data) return [];
