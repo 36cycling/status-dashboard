@@ -97,6 +97,22 @@ export async function isConnected(): Promise<boolean> {
   return token !== null;
 }
 
+export async function debugContactRaw(email: string): Promise<any> {
+  try {
+    return await tlRequest('/contacts.list', {
+      filter: {
+        email: {
+          type: 'primary',
+          email: email,
+        },
+      },
+      include: 'responsible_user',
+    });
+  } catch (err: any) {
+    return { error: err.message };
+  }
+}
+
 export async function findContact(email: string): Promise<{ id: string; name: string; createdAt: string; responsibleUser: string | null } | null> {
   try {
     const result = await tlRequest('/contacts.list', {
