@@ -50,7 +50,8 @@ router.get('/customers/archived', (_req, res) => {
 });
 
 router.post('/customers/:id/archive', (req, res) => {
-  runQuery('UPDATE customers SET dismissed_at = datetime(\'now\') WHERE id = ?', [Number(req.params.id)]);
+  // Use ISO format so it's comparable with event dates from Graph API
+  runQuery('UPDATE customers SET dismissed_at = ? WHERE id = ?', [new Date().toISOString(), Number(req.params.id)]);
   res.json({ success: true });
 });
 
@@ -144,6 +145,18 @@ router.get('/sync/status', (_req, res) => {
   res.json({
     last_outlook_sync: lastOutlook?.value || null,
     last_teamleader_sync: lastTeamleader?.value || null,
+  });
+});
+
+// Debug: show dismissed customers and their dates
+router.get('/debug/dismissed', (_req, res) => {
+  const dismissed = getAll('SELECT id, name, email, dismissed_at FROM customers WHERE dismissed_at IS NOT NULL');
+  const sampleEvent = getOne("SELECT date FROM timeline_events ORDER BY date DESC LIMIT 1");
+  res.json({
+    count: dismissed.length,
+    dismissed,
+    sample_event_date_format: sampleEvent?.date || 'no events',
+    note: 'dismissed_at and event dates must be in same format for comparison to work',
   });
 });
 
