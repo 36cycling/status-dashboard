@@ -136,4 +136,9 @@ router.get('/sync/status', (_req, res) => {
   });
 });
 
+router.get('/debug/events', (_req, res) => {
+  const events = getAll("SELECT id, type, metadata FROM timeline_events WHERE type IN ('tl_contact', 'tl_deal', 'email_out') ORDER BY id DESC LIMIT 20");
+  res.json(events.map(e => ({ ...e, metadata: JSON.parse((e.metadata as string) || '{}') })));
+});
+
 export default router;
