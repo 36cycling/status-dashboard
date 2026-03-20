@@ -179,34 +179,52 @@ export async function findContact(email: string): Promise<{ id: string; name: st
 
 export async function findDeals(contactId: string): Promise<Array<{ id: string; title: string; status: string; createdAt: string; responsibleUser: string | null }>> {
   try {
-    const result = await tlRequest('/deals.list', {
+    const listResult = await tlRequest('/deals.list', {
       filter: {
         customer: {
           type: 'contact',
           id: contactId,
         },
       },
-      include: 'responsible_user',
     });
 
-    // Build user lookup from sideloaded data
-    const userMap = new Map<string, string>();
-    if (result.included?.users) {
-      for (const user of result.included.users) {
-        userMap.set(user.id, `${user.first_name || ''} ${user.last_name || ''}`.trim());
+    if (!listResult.data) return [];
+
+    // Fetch full details for each deal to get responsible_user
+    const deals: Array<{ id: string; title: string; status: string; createdAt: string; responsibleUser: string | null }> = [];
+    for (const deal of listResult.data) {
+      try {
+        const info = await tlRequest('/deals.info', { id: deal.id });
+        const data = info.data || info;
+
+        // Get responsible user name from included data
+        let responsibleUser: string | null = null;
+        if (data.responsible_user?.id && info.included?.user) {
+          const user = info.included.user.find((u: any) => u.id === data.responsible_user.id);
+          if (user) {
+            responsibleUser = `${user.first_name || ''} ${user.last_name || ''}`.trim();
+          }
+        }
+
+        deals.push({
+          id: data.id,
+          title: data.title,
+          status: data.status,
+          createdAt: data.created_at || new Date().toISOString(),
+          responsibleUser,
+        });
+      } catch {
+        // Fallback to list data if info fails
+        deals.push({
+          id: deal.id,
+          title: deal.title,
+          status: deal.status,
+          createdAt: deal.created_at || new Date().toISOString(),
+          responsibleUser: null,
+        });
       }
     }
-
-    if (result.data) {
-      return result.data.map((deal: any) => ({
-        id: deal.id,
-        title: deal.title,
-        status: deal.status,
-        createdAt: deal.created_at || new Date().toISOString(),
-        responsibleUser: deal.responsible_user?.id ? (userMap.get(deal.responsible_user.id) || null) : null,
-      }));
-    }
-    return [];
+    return deals;
   } catch {
     return [];
   }
