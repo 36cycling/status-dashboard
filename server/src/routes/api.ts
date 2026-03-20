@@ -238,6 +238,56 @@ router.get('/debug/reply-check', async (req, res) => {
   }
 });
 
+router.get('/debug/mailboxes', async (_req, res) => {
+  try {
+    const msal = await import('@azure/msal-node');
+    const client = new msal.ConfidentialClientApplication({
+      auth: {
+        clientId: process.env.AZURE_CLIENT_ID!,
+        authority: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}`,
+        clientSecret: process.env.AZURE_CLIENT_SECRET!,
+      },
+    });
+    const tokenResult = await client.acquireTokenByClientCredential({
+      scopes: ['https://graph.microsoft.com/.default'],
+    });
+    if (!tokenResult) return res.status(500).json({ error: 'No token' });
+    const token = tokenResult.accessToken;
+
+    const REPLY_MAILBOXES = ['info@36cycling.com', 'jeroen@36cycling.com', 'lisette@36cycling.com', 'michael@36cycling.com', 'lars@36cycling.com'];
+    const results: any[] = [];
+
+    for (const mb of REPLY_MAILBOXES) {
+      try {
+        const r = await fetch(`https://graph.microsoft.com/v1.0/users/${mb}/mailFolders('SentItems')/messages?$top=3&$orderby=sentDateTime desc&$select=subject,sentDateTime,from`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (r.ok) {
+          const data: any = await r.json();
+          results.push({
+            mailbox: mb,
+            accessible: true,
+            sentCount: data.value.length,
+            sample: data.value.map((m: any) => ({ subject: m.subject, from: m.from?.emailAddress?.name, date: m.sentDateTime })),
+          });
+        } else {
+          const body = await r.text();
+          results.push({ mailbox: mb, accessible: false, status: r.status, error: body.substring(0, 200) });
+        }
+      } catch (err: any) {
+        results.push({ mailbox: mb, accessible: false, error: err.message });
+      }
+    }
+
+    // Also show current event counts by type
+    const eventCounts = getAll("SELECT type, COUNT(*) as count FROM timeline_events GROUP BY type");
+
+    res.json({ mailboxes: results, eventCounts });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/debug/events', (_req, res) => {
   const events = getAll("SELECT id, type, metadata FROM timeline_events WHERE type IN ('tl_contact', 'tl_deal', 'email_out') ORDER BY id DESC LIMIT 20");
   res.json(events.map(e => ({ ...e, metadata: JSON.parse((e.metadata as string) || '{}') })));
