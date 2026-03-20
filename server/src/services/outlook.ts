@@ -15,6 +15,15 @@ const INTERNAL_EMAILS = [
   'no-reply@',
 ];
 
+// Internal mailboxes to check for sent replies
+const REPLY_MAILBOXES = [
+  'info@36cycling.com',
+  'jeroen@36cycling.com',
+  'lisette@36cycling.com',
+  'michael@36cycling.com',
+  'lars@36cycling.com',
+];
+
 function isInternalEmail(email: string): boolean {
   const lower = email.toLowerCase();
   return INTERNAL_EMAILS.some(internal =>
@@ -225,16 +234,25 @@ export async function syncMails() {
     token
   );
 
-  // Get sent items to match replies (also last 2 months)
+  // Get sent items from ALL internal mailboxes to match replies (also last 2 months)
   const sentDateFilter = `sentDateTime ge ${twoMonthsAgo.toISOString()}`;
-  const sentItems = await graphRequest(
-    `${mailboxPath}/mailFolders('SentItems')/messages?$top=200&$orderby=sentDateTime desc&$filter=${encodeURIComponent(sentDateFilter)}&$select=id,subject,bodyPreview,sentDateTime,toRecipients,conversationId,from`,
-    token
-  );
+  const allSentItems: any[] = [];
+
+  for (const mailbox of REPLY_MAILBOXES) {
+    try {
+      const sentResult = await graphRequest(
+        `/users/${mailbox}/mailFolders('SentItems')/messages?$top=200&$orderby=sentDateTime desc&$filter=${encodeURIComponent(sentDateFilter)}&$select=id,subject,bodyPreview,sentDateTime,toRecipients,conversationId,from`,
+        token
+      );
+      allSentItems.push(...sentResult.value);
+    } catch {
+      // Mailbox might not be accessible, skip
+    }
+  }
 
   // Build a set of conversation IDs that have sent replies
   const repliedConversations = new Set<string>();
-  for (const sent of sentItems.value) {
+  for (const sent of allSentItems) {
     repliedConversations.add(sent.conversationId);
   }
 
@@ -286,7 +304,7 @@ export async function syncMails() {
 
     // If replied, also add the sent reply as an event
     if (isReplied) {
-      const reply = sentItems.value.find((s: any) => s.conversationId === msg.conversationId);
+      const reply = allSentItems.find((s: any) => s.conversationId === msg.conversationId);
       if (reply) {
         const existingReply = getOne('SELECT id FROM timeline_events WHERE outlook_message_id = ?', [reply.id]);
         if (!existingReply) {
@@ -305,7 +323,7 @@ export async function syncMails() {
     "SELECT id, outlook_message_id FROM timeline_events WHERE type = 'email_out' AND (metadata = '{}' OR metadata NOT LIKE '%\"actor\"%')"
   );
   for (const ev of outEventsWithoutActor) {
-    const sent = sentItems.value.find((s: any) => s.id === ev.outlook_message_id);
+    const sent = allSentItems.find((s: any) => s.id === ev.outlook_message_id);
     if (sent) {
       const actor = sent.from?.emailAddress?.name || sent.from?.emailAddress?.address || '';
       if (actor) {
