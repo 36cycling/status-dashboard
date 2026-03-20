@@ -190,39 +190,45 @@ export async function findDeals(contactId: string): Promise<Array<{ id: string; 
 
     if (!listResult.data) return [];
 
-    // Fetch full details for each deal to get responsible_user
+    // Build user lookup from list response (included.user, not included.users)
+    const userMap = new Map<string, string>();
+    const includedUsers = listResult.included?.user || listResult.included?.users || [];
+    for (const user of includedUsers) {
+      userMap.set(user.id, `${user.first_name || ''} ${user.last_name || ''}`.trim());
+    }
+
+    // If list didn't include users, fetch each deal individually
+    const needsInfo = userMap.size === 0;
+
     const deals: Array<{ id: string; title: string; status: string; createdAt: string; responsibleUser: string | null }> = [];
     for (const deal of listResult.data) {
-      try {
-        const info = await tlRequest('/deals.info', { id: deal.id });
-        const data = info.data || info;
+      let responsibleUser: string | null = null;
 
-        // Get responsible user name from included data
-        let responsibleUser: string | null = null;
-        if (data.responsible_user?.id && info.included?.user) {
-          const user = info.included.user.find((u: any) => u.id === data.responsible_user.id);
-          if (user) {
-            responsibleUser = `${user.first_name || ''} ${user.last_name || ''}`.trim();
-          }
-        }
-
-        deals.push({
-          id: data.id,
-          title: data.title,
-          status: data.status,
-          createdAt: data.created_at || new Date().toISOString(),
-          responsibleUser,
-        });
-      } catch {
-        // Fallback to list data if info fails
-        deals.push({
-          id: deal.id,
-          title: deal.title,
-          status: deal.status,
-          createdAt: deal.created_at || new Date().toISOString(),
-          responsibleUser: null,
-        });
+      if (deal.responsible_user?.id) {
+        responsibleUser = userMap.get(deal.responsible_user.id) || null;
       }
+
+      // Fallback to deals.info if we still don't have the user
+      if (!responsibleUser && deal.responsible_user?.id && needsInfo) {
+        try {
+          const info = await tlRequest('/deals.info', { id: deal.id });
+          const infoUsers = info.included?.user || info.included?.users || [];
+          for (const u of infoUsers) {
+            if (u.id === deal.responsible_user.id) {
+              responsibleUser = `${u.first_name || ''} ${u.last_name || ''}`.trim();
+              break;
+            }
+          }
+        } catch {}
+      }
+
+      deals.push({
+        id: deal.id,
+        title: deal.title,
+        status: deal.status,
+        createdAt: deal.created_at || new Date().toISOString(),
+        responsibleUser,
+      });
     }
     return deals;
   } catch {
