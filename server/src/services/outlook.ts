@@ -384,7 +384,7 @@ export async function syncMails() {
 
     d.run(
       'INSERT INTO timeline_events (customer_id, type, subject, summary, date, is_replied, outlook_message_id, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [customer.id, 'email_in', msg.subject, msg.bodyPreview.substring(0, 200), msg.receivedDateTime, isReplied ? 1 : 0, msg.id, '{}']
+      [customer.id, 'email_in', msg.subject, msg.bodyPreview.substring(0, 200), msg.receivedDateTime, isReplied ? 1 : 0, msg.id, JSON.stringify({ conversationId: msg.conversationId })]
     );
 
     // If replied, also add the sent reply as an event
@@ -399,6 +399,58 @@ export async function syncMails() {
             [customer.id, 'email_out', reply.subject, reply.bodyPreview.substring(0, 200), reply.sentDateTime, 0, reply.id, JSON.stringify({ actor: replyFrom })]
           );
         }
+      }
+    }
+  }
+
+  // Backfill: re-check unreplied email_in events against all mailbox sent items
+  const unrepliedEvents = getAll(
+    "SELECT id, outlook_message_id, customer_id, metadata FROM timeline_events WHERE type = 'email_in' AND is_replied = 0"
+  );
+
+  // Build a map of conversationId -> sent reply for quick lookup
+  const sentByConversation = new Map<string, any>();
+  for (const sent of allSentItems) {
+    if (sent.conversationId && !sentByConversation.has(sent.conversationId)) {
+      sentByConversation.set(sent.conversationId, sent);
+    }
+  }
+
+  for (const ev of unrepliedEvents) {
+    const meta = JSON.parse((ev.metadata as string) || '{}');
+    let convId = meta.conversationId;
+
+    // If no conversationId stored, try to fetch it from Graph
+    if (!convId && ev.outlook_message_id) {
+      try {
+        const msgDetail = await graphRequest(
+          `${mailboxPath}/messages/${ev.outlook_message_id}?$select=conversationId`,
+          token
+        );
+        convId = msgDetail?.conversationId;
+        // Store it for next time
+        if (convId) {
+          meta.conversationId = convId;
+          d.run('UPDATE timeline_events SET metadata = ? WHERE id = ?', [JSON.stringify(meta), ev.id]);
+        }
+      } catch {
+        // Message might have been deleted
+      }
+    }
+
+    if (convId && sentByConversation.has(convId)) {
+      const reply = sentByConversation.get(convId);
+      // Mark as replied
+      d.run('UPDATE timeline_events SET is_replied = 1 WHERE id = ?', [ev.id]);
+
+      // Add the reply as email_out event if not already there
+      const existingReply = getOne('SELECT id FROM timeline_events WHERE outlook_message_id = ?', [reply.id]);
+      if (!existingReply) {
+        const replyFrom = reply.from?.emailAddress?.name || reply.from?.emailAddress?.address || '';
+        d.run(
+          'INSERT INTO timeline_events (customer_id, type, subject, summary, date, is_replied, outlook_message_id, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          [ev.customer_id, 'email_out', reply.subject, reply.bodyPreview?.substring(0, 200) || '', reply.sentDateTime, 0, reply.id, JSON.stringify({ actor: replyFrom })]
+        );
       }
     }
   }
