@@ -141,4 +141,22 @@ router.get('/debug/events', (_req, res) => {
   res.json(events.map(e => ({ ...e, metadata: JSON.parse((e.metadata as string) || '{}') })));
 });
 
+router.get('/debug/teamleader-raw', async (_req, res) => {
+  try {
+    const { findContact, findDeals } = await import('../services/teamleader');
+    // Pick a customer to test with
+    const customer = getOne('SELECT * FROM customers WHERE archived = 0 LIMIT 1');
+    if (!customer) return res.json({ error: 'No customers found' });
+
+    const contact = await findContact(customer.email as string);
+    let deals: any[] = [];
+    if (contact) {
+      deals = await findDeals(contact.id);
+    }
+    res.json({ customer: { name: customer.name, email: customer.email }, contact, deals });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
