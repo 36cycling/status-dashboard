@@ -143,23 +143,19 @@ router.get('/debug/events', (_req, res) => {
 
 router.get('/debug/teamleader-raw', async (_req, res) => {
   try {
-    const { findContact, findDeals, debugContactRaw, debugDealsRaw } = await import('../services/teamleader');
+    const { findContact, findDeals } = await import('../services/teamleader');
     // Pick a customer that has a tl_contact event
     const event = getOne("SELECT customer_id, metadata FROM timeline_events WHERE type = 'tl_contact' LIMIT 1");
     if (!event) return res.json({ error: 'No tl_contact events found' });
     const customer = getOne('SELECT * FROM customers WHERE id = ?', [event.customer_id]);
     if (!customer) return res.json({ error: 'Customer not found' });
 
-    const rawContact = await debugContactRaw(customer.email as string);
     const contact = await findContact(customer.email as string);
     let deals: any[] = [];
-    let rawDeals: any = null;
     if (contact) {
       deals = await findDeals(contact.id);
-      rawDeals = await debugDealsRaw(contact.id);
     }
-    const meta = JSON.parse((event.metadata as string) || '{}');
-    res.json({ customer: { name: customer.name, email: customer.email }, tl_id: meta.tl_id, rawContact, contact, rawDeals, deals });
+    res.json({ deals });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
