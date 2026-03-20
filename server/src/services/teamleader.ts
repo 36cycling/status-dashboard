@@ -97,7 +97,7 @@ export async function isConnected(): Promise<boolean> {
   return token !== null;
 }
 
-export async function findContact(email: string): Promise<{ id: string; name: string; createdAt: string } | null> {
+export async function findContact(email: string): Promise<{ id: string; name: string; createdAt: string; responsibleUser: string | null } | null> {
   try {
     const result = await tlRequest('/contacts.list', {
       filter: {
@@ -106,14 +106,25 @@ export async function findContact(email: string): Promise<{ id: string; name: st
           email: email,
         },
       },
+      include: 'responsible_user',
     });
 
     if (result.data && result.data.length > 0) {
       const contact = result.data[0];
+
+      // Build user lookup from sideloaded data
+      const userMap = new Map<string, string>();
+      if (result.included?.users) {
+        for (const user of result.included.users) {
+          userMap.set(user.id, `${user.first_name || ''} ${user.last_name || ''}`.trim());
+        }
+      }
+
       return {
         id: contact.id,
         name: `${contact.first_name} ${contact.last_name}`.trim(),
         createdAt: contact.added_at || contact.created_at || new Date().toISOString(),
+        responsibleUser: contact.responsible_user?.id ? (userMap.get(contact.responsible_user.id) || null) : null,
       };
     }
     return null;
@@ -122,7 +133,7 @@ export async function findContact(email: string): Promise<{ id: string; name: st
   }
 }
 
-export async function findDeals(contactId: string): Promise<Array<{ id: string; title: string; status: string; createdAt: string }>> {
+export async function findDeals(contactId: string): Promise<Array<{ id: string; title: string; status: string; createdAt: string; responsibleUser: string | null }>> {
   try {
     const result = await tlRequest('/deals.list', {
       filter: {
@@ -131,7 +142,16 @@ export async function findDeals(contactId: string): Promise<Array<{ id: string; 
           id: contactId,
         },
       },
+      include: 'responsible_user',
     });
+
+    // Build user lookup from sideloaded data
+    const userMap = new Map<string, string>();
+    if (result.included?.users) {
+      for (const user of result.included.users) {
+        userMap.set(user.id, `${user.first_name || ''} ${user.last_name || ''}`.trim());
+      }
+    }
 
     if (result.data) {
       return result.data.map((deal: any) => ({
@@ -139,6 +159,7 @@ export async function findDeals(contactId: string): Promise<Array<{ id: string; 
         title: deal.title,
         status: deal.status,
         createdAt: deal.created_at || new Date().toISOString(),
+        responsibleUser: deal.responsible_user?.id ? (userMap.get(deal.responsible_user.id) || null) : null,
       }));
     }
     return [];
@@ -160,15 +181,24 @@ export async function syncTeamleaderForCustomers() {
 
     // Check if we already have a tl_contact event
     const existingContact = getOne(
-      "SELECT id FROM timeline_events WHERE customer_id = ? AND type = 'tl_contact' AND metadata LIKE ?",
+      "SELECT id, metadata FROM timeline_events WHERE customer_id = ? AND type = 'tl_contact' AND metadata LIKE ?",
       [customer.id, `%"tl_id":"${contact.id}"%`]
     );
 
     if (!existingContact) {
       d.run(
         "INSERT INTO timeline_events (customer_id, type, subject, summary, date, is_replied, outlook_message_id, metadata) VALUES (?, 'tl_contact', ?, ?, ?, 0, NULL, ?)",
-        [customer.id, 'Contact in Teamleader', `Contact aangemaakt: ${contact.name}`, contact.createdAt, JSON.stringify({ tl_id: contact.id })]
+        [customer.id, 'Contact in Teamleader', `Contact aangemaakt: ${contact.name}`, contact.createdAt, JSON.stringify({ tl_id: contact.id, actor: contact.responsibleUser || null })]
       );
+    } else {
+      // Backfill actor for existing tl_contact events
+      if (contact.responsibleUser) {
+        const meta = JSON.parse((existingContact.metadata as string) || '{}');
+        if (!meta.actor) {
+          meta.actor = contact.responsibleUser;
+          d.run('UPDATE timeline_events SET metadata = ? WHERE id = ?', [JSON.stringify(meta), existingContact.id]);
+        }
+      }
     }
 
     // Check for deals
@@ -182,8 +212,25 @@ export async function syncTeamleaderForCustomers() {
       if (!existingDeal) {
         d.run(
           "INSERT INTO timeline_events (customer_id, type, subject, summary, date, is_replied, outlook_message_id, metadata) VALUES (?, 'tl_deal', ?, ?, ?, 0, NULL, ?)",
-          [customer.id, `Deal: ${deal.title}`, `Deal status: ${deal.status}`, deal.createdAt, JSON.stringify({ tl_id: deal.id, status: deal.status })]
+          [customer.id, `Deal: ${deal.title}`, `Deal status: ${deal.status}`, deal.createdAt, JSON.stringify({ tl_id: deal.id, status: deal.status, actor: deal.responsibleUser || null })]
         );
+      }
+    }
+
+    // Backfill actor for existing tl_deal events that don't have one yet
+    for (const deal of deals) {
+      if (deal.responsibleUser) {
+        const existingDealEvent = getOne(
+          "SELECT id, metadata FROM timeline_events WHERE customer_id = ? AND type = 'tl_deal' AND metadata LIKE ?",
+          [customer.id, `%"tl_id":"${deal.id}"%`]
+        );
+        if (existingDealEvent) {
+          const meta = JSON.parse((existingDealEvent.metadata as string) || '{}');
+          if (!meta.actor) {
+            meta.actor = deal.responsibleUser;
+            d.run('UPDATE timeline_events SET metadata = ? WHERE id = ?', [JSON.stringify(meta), existingDealEvent.id]);
+          }
+        }
       }
     }
 

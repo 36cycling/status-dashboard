@@ -228,7 +228,7 @@ export async function syncMails() {
   // Get sent items to match replies (also last 2 months)
   const sentDateFilter = `sentDateTime ge ${twoMonthsAgo.toISOString()}`;
   const sentItems = await graphRequest(
-    `${mailboxPath}/mailFolders('SentItems')/messages?$top=200&$orderby=sentDateTime desc&$filter=${encodeURIComponent(sentDateFilter)}&$select=id,subject,bodyPreview,sentDateTime,toRecipients,conversationId`,
+    `${mailboxPath}/mailFolders('SentItems')/messages?$top=200&$orderby=sentDateTime desc&$filter=${encodeURIComponent(sentDateFilter)}&$select=id,subject,bodyPreview,sentDateTime,toRecipients,conversationId,from`,
     token
   );
 
@@ -290,11 +290,28 @@ export async function syncMails() {
       if (reply) {
         const existingReply = getOne('SELECT id FROM timeline_events WHERE outlook_message_id = ?', [reply.id]);
         if (!existingReply) {
+          const replyFrom = reply.from?.emailAddress?.name || reply.from?.emailAddress?.address || '';
           d.run(
             'INSERT INTO timeline_events (customer_id, type, subject, summary, date, is_replied, outlook_message_id, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [customer.id, 'email_out', reply.subject, reply.bodyPreview.substring(0, 200), reply.sentDateTime, 0, reply.id, '{}']
+            [customer.id, 'email_out', reply.subject, reply.bodyPreview.substring(0, 200), reply.sentDateTime, 0, reply.id, JSON.stringify({ actor: replyFrom })]
           );
         }
+      }
+    }
+  }
+
+  // Backfill actor for existing email_out events that don't have one yet
+  const outEventsWithoutActor = getAll(
+    "SELECT id, outlook_message_id FROM timeline_events WHERE type = 'email_out' AND (metadata = '{}' OR metadata NOT LIKE '%\"actor\"%')"
+  );
+  for (const ev of outEventsWithoutActor) {
+    const sent = sentItems.value.find((s: any) => s.id === ev.outlook_message_id);
+    if (sent) {
+      const actor = sent.from?.emailAddress?.name || sent.from?.emailAddress?.address || '';
+      if (actor) {
+        const existing = JSON.parse((ev.metadata as string) || '{}');
+        existing.actor = actor;
+        d.run('UPDATE timeline_events SET metadata = ? WHERE id = ?', [JSON.stringify(existing), ev.id]);
       }
     }
   }

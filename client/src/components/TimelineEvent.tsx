@@ -34,8 +34,17 @@ function getEventStyle(event: TEvent): string {
   }
 }
 
+function getDisplayName(event: TEvent, customerName?: string): string | undefined {
+  const actor = (event.metadata as Record<string, unknown>)?.actor as string | undefined;
+  if (event.type === 'email_out' && actor) return actor;
+  if (event.type === 'tl_deal' && actor) return actor;
+  if (event.type === 'tl_contact' && actor) return actor;
+  return customerName;
+}
+
 export default function TimelineEvent({ event, customerName }: Props) {
   const [showTooltip, setShowTooltip] = useState(false);
+  const displayName = getDisplayName(event, customerName);
 
   return (
     <div
@@ -50,9 +59,9 @@ export default function TimelineEvent({ event, customerName }: Props) {
             ? event.summary
             : `${event.subject}`}
         </div>
-        {customerName && (
+        {displayName && (
           <div className="text-[10px] mt-1 truncate font-medium opacity-80 border-t border-current/20 pt-1">
-            {customerName}
+            {displayName}
           </div>
         )}
       </div>
